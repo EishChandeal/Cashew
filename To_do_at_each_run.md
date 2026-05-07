@@ -42,7 +42,7 @@ If you are setting up this project for the first time, here is how you can run t
 
 ---
 
-## If the app doesn't run at first run
+## If the app doesn't run after your first run
 
 When you stop the app after its first run in Windows OS:
 
