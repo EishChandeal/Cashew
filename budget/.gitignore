@@ -55,3 +55,6 @@ keystore.jks
 
 /.firebase
 .firebase/
+
+# nah my own stuff
+explanations_readme.md

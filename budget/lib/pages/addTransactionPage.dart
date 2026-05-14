@@ -389,6 +389,19 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   }
 
   bool lockAddTransaction = false;
+
+  /// Pops the AddTransactionPage immediately, then completes the DB save in
+  /// the background. Only safe to call for new transactions.
+  void saveNewTransactionAndPop() {
+    if (lockAddTransaction) return;
+    lockAddTransaction = true;
+    popRoute(context);
+    savingHapticFeedback();
+    addTransactionLocked(skipTipPopup: true).then((_) {
+      lockAddTransaction = false;
+    });
+  }
+
   Future<bool> addTransaction() async {
     if (lockAddTransaction) return false;
     lockAddTransaction = true;
@@ -402,8 +415,9 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     return result;
   }
 
-  Future<bool> addTransactionLocked() async {
-    if (appStateSettings["canShowTransactionActionButtonTip"] == true &&
+  Future<bool> addTransactionLocked({bool skipTipPopup = false}) async {
+    if (skipTipPopup == false &&
+        appStateSettings["canShowTransactionActionButtonTip"] == true &&
         selectedType != null) {
       await openBottomSheet(
         context,
@@ -586,7 +600,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         TransactionSpecialType.subscription,
         TransactionSpecialType.upcoming
       ].contains(createdTransaction.type)) {
-        setUpcomingNotifications(context);
+        setUpcomingNotifications(navigatorKey.currentContext);
       }
 
       // recentlyAddedTransactionID.value =
@@ -608,7 +622,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
               ? Icons.warning_amber_outlined
               : Icons.warning_amber_rounded,
         ));
-        clearSelectedCategory();
+        if (mounted) clearSelectedCategory();
       } else {
         openSnackbar(SnackbarMessage(
           title: "cannot-create-transaction".tr(),
@@ -782,33 +796,13 @@ class _AddTransactionPageState extends State<AddTransactionPage>
         }
         await premiumPopupAddTransaction(context);
         if (widget.startInitialAddTransactionSequence == false) return;
-        if (appStateSettings["askForTransactionTitle"]) {
-          openBottomSheet(
-            context,
-            // Only allow full snap when entering a title
-            popupWithKeyboard: true,
-            SelectTitle(
-              selectedTitle: selectedTitle,
-              setSelectedNote: setSelectedNoteController,
-              setSelectedTitle: setSelectedTitleController,
-              setSelectedCategory: setSelectedCategory,
-              setSelectedSubCategory: setSelectedSubCategory,
-              next: () {
-                afterSetTitle();
-              },
-              noteInputController: _noteInputController,
-              setSelectedNoteController: setSelectedNoteController,
-              setSelectedDateTime: (DateTime date) {
-                setState(() {
-                  selectedDate = date;
-                });
-              },
-              selectedDate: widget.selectedDate,
-            ),
-          );
-        } else {
-          afterSetTitle();
-        }
+        selectAmountPopup(
+          next: () async {
+            popRoute(context);
+            afterSetAmount();
+          },
+          nextLabel: "select-category".tr(),
+        );
       });
     }
     if (widget.selectedBudget != null) {
@@ -900,7 +894,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     }
   }
 
-  Future afterSetTitle() async {
+  Future afterSetAmount() async {
     MainAndSubcategory mainAndSubcategory = await selectCategorySequence(
       context,
       selectedCategory: selectedCategory,
@@ -936,15 +930,41 @@ class _AddTransactionPageState extends State<AddTransactionPage>
 
     if (mainAndSubcategory.main != null &&
         mainAndSubcategory.ignoredSubcategorySelection == false) {
-      selectAmountPopup(
-        next: () async {
-          await addTransaction();
-          popRoute(context);
-          popRoute(context);
-        },
-        nextLabel: textAddTransaction,
-      );
+      if (appStateSettings["askForTransactionTitle"]) {
+        openBottomSheet(
+          context,
+          popupWithKeyboard: true,
+          SelectTitle(
+            selectedTitle: selectedTitle,
+            setSelectedNote: setSelectedNoteController,
+            setSelectedTitle: setSelectedTitleController,
+            setSelectedCategory: setSelectedCategory,
+            setSelectedSubCategory: setSelectedSubCategory,
+            next: () {
+              // Dismiss the SelectTitle sheet first (button's own onTap already
+              // calls popRoute once for the sheet itself), then pop the page
+              // and save in background.
+              saveNewTransactionAndPop();
+            },
+            nextLabel: textAddTransaction ?? "add-transaction".tr(),
+            noteInputController: _noteInputController,
+            setSelectedNoteController: setSelectedNoteController,
+            setSelectedDateTime: (DateTime date) {
+              setState(() {
+                selectedDate = date;
+              });
+            },
+            selectedDate: widget.selectedDate,
+          ),
+        );
+      } else {
+        saveNewTransactionAndPop();
+      }
     }
+  }
+
+  Future afterSetTitle() async {
+    afterSetAmount();
   }
 
   selectAmountPopup({VoidCallback? next, String? nextLabel}) async {
@@ -2094,28 +2114,28 @@ class _AddTransactionPageState extends State<AddTransactionPage>
             child: Row(
               children: [
                 Expanded(
-                  child: selectedCategory == null
+                  child: selectedAmount == null
                       ? Button(
                           hasBottomExtraSafeArea: true,
-                          label: "select-category".tr(),
+                          label: "enter-amount".tr(),
                           onTap: () {
-                            selectCategorySequence(
-                              context,
-                              selectedCategory: selectedCategory,
-                              setSelectedCategory: setSelectedCategory,
-                              selectedSubCategory: selectedSubCategory,
-                              setSelectedSubCategory: setSelectedSubCategory,
-                              skipIfSet: false,
-                              selectedIncomeInitial: selectedIncome,
-                            );
+                            selectAmountPopup();
                           },
                         )
-                      : selectedAmount == null
+                      : selectedCategory == null
                           ? Button(
                               hasBottomExtraSafeArea: true,
-                              label: "enter-amount".tr(),
+                              label: "select-category".tr(),
                               onTap: () {
-                                selectAmountPopup();
+                                selectCategorySequence(
+                                  context,
+                                  selectedCategory: selectedCategory,
+                                  setSelectedCategory: setSelectedCategory,
+                                  selectedSubCategory: selectedSubCategory,
+                                  setSelectedSubCategory: setSelectedSubCategory,
+                                  skipIfSet: false,
+                                  selectedIncomeInitial: selectedIncome,
+                                );
                               },
                             )
                           : Button(
@@ -2446,6 +2466,7 @@ class SelectTitle extends StatefulWidget {
     required this.noteInputController,
     required this.setSelectedNoteController,
     this.next,
+    this.nextLabel,
     this.disableAskForNote = false,
     this.customTitleInputWidgetBuilder,
   }) : super(key: key);
@@ -2459,6 +2480,7 @@ class SelectTitle extends StatefulWidget {
   final TextEditingController noteInputController;
   final dynamic Function(String, {bool setInput}) setSelectedNoteController;
   final VoidCallback? next;
+  final String? nextLabel;
   final bool disableAskForNote;
   final Widget Function(FocusNode enterTitleFocus)?
       customTitleInputWidgetBuilder;
@@ -2748,7 +2770,7 @@ class _SelectTitleState extends State<SelectTitle> {
                   SizedBox(height: 15),
                   widget.next != null
                       ? Button(
-                          label: "select-category".tr(),
+                          label: widget.nextLabel ?? "select-category".tr(),
                           onTap: () {
                             popRoute(context);
                             if (widget.next != null) {
@@ -3713,10 +3735,8 @@ class SelectTransactionTypePopup extends StatelessWidget {
                     highlightActionButton: true,
                     useHorizontalPaddingConstrained: false,
                     openPage: Container(),
-                    containerColor: Theme.of(context)
-                        .colorScheme
-                        .background
-                        .withOpacity(0.5),
+                    containerColor:
+                        Theme.of(context).colorScheme.surface.withOpacity(0.5),
                     transaction: Transaction(
                       transactionPk: "-1",
                       name: "",
@@ -4745,7 +4765,7 @@ class SelectSubcategoryChips extends StatelessWidget {
                         allowMultipleSelected: false,
                         selectedColor: Theme.of(context)
                             .colorScheme
-                            .background
+                            .surface
                             .withOpacity(0.6),
                         onLongPress: (category) {
                           pushRoute(
